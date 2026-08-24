@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Persistent Priority Queue | Interactive DEPQ & WAL Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dark-theme">
+  <!-- Top Navigation & Global Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="app-title">Persistent Priority Queue <span class="badge-depq">Min-Max DEPQ</span></h1>
+        <p class="app-subtitle">Thread-Safe Double-Ended Priority Queue with Write-Ahead Log (WAL) & Crash Recovery</p>
+      </div>
+    </div>
+    
+    <div class="header-actions">
+      <div class="server-status" id="serverStatusBadge">
+        <span class="status-dot online"></span>
+        <span id="statusText">Connected to Storage Engine</span>
+      </div>
+      <button class="btn btn-outline-danger" id="btnCrashReload" title="Drop in-memory heap and reconstruct from disk WAL">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        Simulate Crash & Reload
+      </button>
+      <button class="btn btn-outline" id="btnSnapshot" title="Create atomic snapshot checkpoint to compact WAL">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        Save Snapshot
+      </button>
+    </div>
+  </header>
+
+  <!-- Metric & Peek Stats Cards -->
+  <section class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-header">
+        <span class="stat-label">Queue Size</span>
+        <span class="badge" id="emptyBadge">Empty</span>
+      </div>
+      <div class="stat-value" id="queueSizeVal">0</div>
+      <div class="stat-meta" id="queueMeta">Capacity: Unbounded</div>
+    </div>
+
+    <div class="stat-card min-card">
+      <div class="stat-header">
+        <span class="stat-label text-cyan">⚡ Peek Min (Highest Urgency)</span>
+        <span class="time-complexity">O(1)</span>
+      </div>
+      <div class="stat-value text-cyan" id="peekMinVal">None</div>
+      <div class="stat-meta" id="peekMinMeta">Priority: - | Seq: -</div>
+      <button class="btn btn-sm btn-cyan mt-2" id="btnExtractMin" disabled>
+        Extract Min (O(log N))
+      </button>
+    </div>
+
+    <div class="stat-card max-card">
+      <div class="stat-header">
+        <span class="stat-label text-purple">🔥 Peek Max (Lowest Urgency)</span>
+        <span class="time-complexity">O(1)</span>
+      </div>
+      <div class="stat-value text-purple" id="peekMaxVal">None</div>
+      <div class="stat-meta" id="peekMaxMeta">Priority: - | Seq: -</div>
+      <button class="btn btn-sm btn-purple mt-2" id="btnExtractMax" disabled>
+        Extract Max (O(log N))
+      </button>
+    </div>
+
+    <div class="stat-card wal-card">
+      <div class="stat-header">
+        <span class="stat-label">Persistence Durability</span>
+        <span class="badge badge-success">WAL + CRC32</span>
+      </div>
+      <div class="stat-value" id="walCountVal">0 <span class="stat-unit">records</span></div>
+      <div class="stat-meta" id="snapshotMeta">Snapshot: 0 items</div>
+    </div>
+  </section>
+
+  <!-- Scenario Quick Presets Bar -->
+  <section class="scenarios-bar">
+    <span class="scenarios-title">🚀 Load Scenario Presets:</span>
+    <button class="btn btn-pill" data-scenario="hospital_triage">
+      🏥 Hospital ER Triage
+    </button>
+    <button class="btn btn-pill" data-scenario="cloud_scheduler">
+      ☁️ Cloud Job Scheduler
+    </button>
+    <button class="btn btn-pill" data-scenario="tie_breaker_demo">
+      ⚖️ FIFO Sequence Tie-Breaker
+    </button>
+    <button class="btn btn-pill btn-pill-danger" id="btnClearQueue">
+      🗑️ Clear Queue
+    </button>
+  </section>
+
+  <!-- Main Workspace Layout -->
+  <main class="main-layout">
+    <!-- Left Column: Interactive Operations & Form Controls -->
+    <div class="left-panel">
+      <!-- Tabs for Operations -->
+      <div class="panel-card">
+        <div class="tabs-nav">
+          <button class="tab-btn active" data-tab="insert-tab">Insert Item</button>
+          <button class="tab-btn" data-tab="update-tab">Update Item</button>
+          <button class="tab-btn" data-tab="delete-tab">Delete Item</button>
+        </div>
+
+        <!-- Insert Tab -->
+        <div class="tab-pane active" id="insert-tab">
+          <form id="insertForm">
+            <div class="form-group">
+              <label for="insertItemId">Item ID (Optional, auto UUID if blank)</label>
+              <input type="text" id="insertItemId" placeholder="e.g. task_auth_sync or leave blank" class="form-input">
+            </div>
+
+            <div class="form-group">
+              <div class="label-with-hint">
+                <label for="insertPriority">Priority Value (Lower = Higher Urgency in Min-Heap)</label>
+                <span class="hint" id="prioHint">0.0 = Top Critical</span>
+              </div>
+              <div class="input-with-quick">
+                <input type="number" id="insertPriority" step="0.1" value="1.0" class="form-input" required>
+                <div class="quick-prio-buttons">
+                  <button type="button" class="btn-micro" data-prio="0.1">0.1 (Urgent)</button>
+                  <button type="button" class="btn-micro" data-prio="1.0">1.0</button>
+                  <button type="button" class="btn-micro" data-prio="5.0">5.0</button>
+                  <button type="button" class="btn-micro" data-prio="50.0">50.0 (Low)</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="insertPayload">Payload Data (JSON or Description Text)</label>
+              <textarea id="insertPayload" rows="2" class="form-input form-textarea" placeholder='{"description": "Process urgent payment batch"}'></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-block">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              Insert Item into Heap (O(log N))
+            </button>
+          </form>
+        </div>
+
+        <!-- Update Tab -->
+        <div class="tab-pane" id="update-tab">
+          <form id="updateForm">
+            <div class="form-group">
+              <label for="updateItemSelect">Select Item to Mutate</label>
+              <select id="updateItemSelect" class="form-input" required>
+                <option value="">-- Choose an item --</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="updateNewPriority">New Priority</label>
+              <input type="number" id="updateNewPriority" step="0.1" placeholder="e.g. 0.2 (Promote to top)" class="form-input">
+            </div>
+
+            <div class="form-group">
+              <label for="updateNewPayload">New Payload Data (Optional)</label>
+              <textarea id="updateNewPayload" rows="2" class="form-input form-textarea" placeholder='{"description": "Condition escalated"}'></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-warning btn-block">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+              Update Priority & Rebalance (O(log N))
+            </button>
+          </form>
+        </div>
+
+        <!-- Delete Tab -->
+        <div class="tab-pane" id="delete-tab">
+          <form id="deleteForm">
+            <div class="form-group">
+              <label for="deleteItemSelect">Select Item to Remove</label>
+              <select id="deleteItemSelect" class="form-input" required>
+                <option value="">-- Choose an item to delete --</option>
+              </select>
+            </div>
+            <p class="text-muted text-sm mb-3">
+              Uses the hash map position index to locate and delete the arbitrary element in <strong>O(log N)</strong> time without $O(N)$ scanning.
+            </p>
+            <button type="submit" class="btn btn-danger btn-block">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              Delete Item by ID (O(log N))
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Quick Triage Action Card (Scenario Special) -->
+      <div class="panel-card mt-3" id="specialActionsCard">
+        <h3 class="panel-title">⚡ Interactive Triage Actions</h3>
+        <p class="text-sm text-muted mb-2">Simulate real-time emergency events or dynamic priority escalation:</p>
+        <div class="action-buttons-stack">
+          <button class="btn btn-outline-warning btn-sm" id="btnAnaphylaxisAlert">
+            🚨 Trigger Anaphylaxis Alert (Escalate Patient P_005 to 0.1)
+          </button>
+          <button class="btn btn-outline-info btn-sm" id="btnAgingTick">
+            ⏳ Run Priority Aging (Boost waiting tasks by -0.5)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Column: Min-Max Heap Tree Visualization -->
+    <div class="center-panel">
+      <div class="panel-card tree-container-card">
+        <div class="tree-header">
+          <div>
+            <h2 class="panel-title">🌳 Min-Max Heap Binary Tree Visualizer</h2>
+            <div class="legend-row">
+              <span class="legend-item"><span class="legend-dot min-dot"></span> Min Level (Even: 0, 2, 4...)</span>
+              <span class="legend-item"><span class="legend-dot max-dot"></span> Max Level (Odd: 1, 3, 5...)</span>
+            </div>
+          </div>
+          <div class="view-toggles">
+            <button class="btn btn-sm btn-outline active" id="btnViewTree">Tree View</button>
+            <button class="btn btn-sm btn-outline" id="btnViewArray">Array View</button>
+          </div>
+        </div>
+
+        <!-- Tree Canvas Container -->
+        <div class="tree-viewport" id="treeViewport">
+          <svg id="treeSvg" class="tree-svg"></svg>
+          <div id="treeNodesContainer" class="tree-nodes-container"></div>
+          <div class="empty-state" id="emptyTreePlaceholder">
+            <div class="empty-icon">📭</div>
+            <h3>Queue is Empty</h3>
+            <p>Insert an item or click one of the preset scenarios above to populate the Min-Max Heap.</p>
+          </div>
+        </div>
+
+        <!-- Flat Array & PosMap Inspector (Alternate View) -->
+        <div class="array-viewport hidden" id="arrayViewport">
+          <h4 class="subheading">Array Representation <code>self._heap[i]</code>:</h4>
+          <div class="array-strip" id="arrayStrip"></div>
+
+          <h4 class="subheading mt-4">Position Index Map <code>self._pos_map[item_id] -> index</code> ($O(1)$ Lookup):</h4>
+          <div class="posmap-grid" id="posmapGrid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Write-Ahead Log (WAL) & Disk Persistence Stream -->
+    <div class="right-panel">
+      <div class="panel-card wal-console-card">
+        <div class="wal-header">
+          <div>
+            <h3 class="panel-title">📜 Write-Ahead Log (WAL)</h3>
+            <p class="text-xs text-muted">Append-only journal with CRC32 checksums</p>
+          </div>
+          <button class="btn btn-micro" id="btnRefreshWal" title="Refresh Log">🔄</button>
+        </div>
+
+        <div class="wal-log-stream" id="walLogStream">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div class="wal-footer">
+          <div class="text-xs text-muted" id="walFilePath">File: ./pq_data/web_queue.wal</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Notification Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

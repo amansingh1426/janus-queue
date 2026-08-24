@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Storage runtime data directories
+pq_data/
+demo_pq_data/
+
+# IDE / Editor folders
+.vscode/
+.idea/
