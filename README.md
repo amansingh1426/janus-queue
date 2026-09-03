@@ -1,6 +1,6 @@
-# Persistent Priority Queue
+# JanusQueue
 
-A production-grade, thread-safe **Double-Ended Priority Queue (DEPQ)** featuring durable persistence via an append-only **Write-Ahead Log (WAL)** with atomic snapshotting and crash recovery, as well as an optional **PostgreSQL** relational persistence engine.
+A production-grade, thread-safe **Durable Double-Ended Priority Queue (DEPQ)** featuring persistence via an append-only **Write-Ahead Log (WAL)** with atomic snapshotting and crash recovery, as well as an optional **PostgreSQL** relational persistence engine.
 
 ---
 
@@ -210,7 +210,7 @@ with PersistentPriorityQueue(storage_dir="./my_queue_data", queue_name="tasks") 
 
 ### Project Structure
 ```
-persistent-priority-queue/
+janus-queue/
 ├── module.py               # Main submission module (PersistentPriorityQueue)
 ├── min_max_heap.py         # Indexed Min-Max Heap core data structure
 ├── storage.py              # File-based WAL engine & PostgreSQL backend
@@ -230,11 +230,19 @@ The test suite uses Python's standard `unittest` framework (zero external depend
 python3 -m unittest discover -s tests -v
 ```
 
-### Running the Interactive Demo
-Run the demonstration script to view real-time operations, persistence reload, and use cases:
+### Running the Web GUI Dashboard Locally
+Run the interactive REST API & web dashboard (zero external dependencies):
 ```bash
-python3 run_demo.py
+python3 app.py --port 8000
 ```
+Open `http://localhost:8000` in your browser.
+
+### Deploying to Vercel
+This repository is configured for serverless deployment on Vercel with Python functions and static asset CDN routing (`vercel.json` + `api/index.py`).
+
+1. Push your repository to GitHub.
+2. Import the repository into [Vercel](https://vercel.com/new).
+3. Vercel will automatically build and deploy the web dashboard and REST API.
 
 ---
 

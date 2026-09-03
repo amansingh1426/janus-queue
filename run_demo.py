@@ -1,4 +1,4 @@
-"""Interactive & Visual Demonstration of Persistent Priority Queue.
+"""Interactive & Visual Demonstration of JanusQueue (Durable DEPQ).
 
 Showcases:
 1. Core Priority Queue Operations (Insert, Extract Min/Max, Peek, Update, Delete).

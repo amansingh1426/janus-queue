@@ -31,7 +31,14 @@ from min_max_heap import QueueItem
 class QueueManager:
     """Manages the lifecycle, operations, and WAL inspection of PersistentPriorityQueue."""
 
-    def __init__(self, storage_dir: str = "./pq_data", queue_name: str = "web_queue") -> None:
+    def __init__(self, storage_dir: Optional[str] = None, queue_name: str = "web_queue") -> None:
+        if storage_dir is None:
+            storage_dir = os.getenv("PQ_STORAGE_DIR")
+            if not storage_dir:
+                if os.getenv("VERCEL") or not os.access(".", os.W_OK):
+                    storage_dir = "/tmp/pq_data"
+                else:
+                    storage_dir = "./pq_data"
         self.storage_dir = os.path.abspath(storage_dir)
         self.queue_name = queue_name
         self._lock = threading.Lock()
@@ -389,11 +396,12 @@ def run_server(port: int = 8000, storage_dir: str = "./pq_data") -> None:
 
     class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         daemon_threads = True
+        allow_reuse_address = True
 
     server_address = ("", port)
     with ThreadingServer(server_address, AppRequestHandler) as httpd:
         print("=" * 65)
-        print("  🌟 Persistent Priority Queue - Interactive Web Interface")
+        print("  🌟 JanusQueue - Interactive Web Dashboard")
         print("=" * 65)
         print(f"  -> Local URL:     http://localhost:{port}")
         print(f"  -> Data Storage:  {os.path.abspath(storage_dir)}")

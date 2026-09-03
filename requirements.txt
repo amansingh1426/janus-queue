@@ -1,0 +1,3 @@
+# JanusQueue uses Python standard library for core operations and web server.
+# Optional dependencies:
+# psycopg2-binary>=2.9.0  # Uncomment if connecting to PostgreSQL database on Vercel (e.g. Vercel Postgres / Neon / Supabase)
