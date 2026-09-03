@@ -1,15 +1,26 @@
 from __future__ import annotations
+import http.server
+import json
 import os
 import sys
+import traceback
+import urllib.parse
+from typing import Any, Dict
 
-# Ensure parent directory is in python module search path
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+# Ensure project root is in python module path
+root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
-from app import AppRequestHandler, QueueManager
+from exceptions import (
+    DuplicateItemError,
+    EmptyQueueError,
+    ItemNotFoundError,
+    PriorityQueueError,
+)
+from app import QueueManager
 
-# Determine writable storage directory (Vercel serverless read-only filesystem uses /tmp)
+# Determine writable storage directory for Vercel serverless environment
 storage_dir = os.getenv("PQ_STORAGE_DIR")
 if not storage_dir:
     if os.getenv("VERCEL") or not os.access(".", os.W_OK):
@@ -17,11 +28,115 @@ if not storage_dir:
     else:
         storage_dir = "./pq_data"
 
-# Initialize global QueueManager singleton for serverless context
 manager = QueueManager(storage_dir=storage_dir, queue_name="vercel_queue")
-AppRequestHandler.manager = manager
 
-# Vercel @vercel/python entry point
-class handler(AppRequestHandler):
-    """Serverless HTTP Handler for Vercel deployment."""
-    pass
+
+class handler(http.server.BaseHTTPRequestHandler):
+    """Vercel Serverless HTTP Handler for JanusQueue API."""
+
+    def _send_json(self, data: Any, status: int = 200) -> None:
+        response_bytes = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(response_bytes)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.end_headers()
+        self.wfile.write(response_bytes)
+
+    def _read_json_body(self) -> Dict[str, Any]:
+        content_len = int(self.headers.get("Content-Length", 0))
+        if content_len == 0:
+            return {}
+        body_bytes = self.rfile.read(content_len)
+        return json.loads(body_bytes.decode("utf-8"))
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_GET(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path.rstrip("/")
+
+        # Handle root or API state routes
+        if path in ("/api/state", "/state", "/api/index.py", ""):
+            try:
+                state = manager.get_state()
+                self._send_json(state)
+            except Exception as e:
+                self._send_json({"error": str(e), "trace": traceback.format_exc()}, status=500)
+        else:
+            self._send_json({"error": f"Endpoint '{path}' not found"}, status=404)
+
+    def do_POST(self) -> None:
+        parsed_url = urllib.parse.urlparse(self.path)
+        path = parsed_url.path.rstrip("/")
+
+        try:
+            body = self._read_json_body()
+
+            if path in ("/api/insert", "/insert"):
+                item_id = body.get("item_id")
+                if item_id == "":
+                    item_id = None
+                priority = float(body.get("priority", 0.0))
+                data = body.get("data", None)
+                result = manager.insert(item_id, priority, data)
+                self._send_json({"status": "success", "item": result, "state": manager.get_state()})
+
+            elif path in ("/api/extract_min", "/extract_min"):
+                result = manager.extract_min()
+                self._send_json({"status": "success", "extracted": result, "state": manager.get_state()})
+
+            elif path in ("/api/extract_max", "/extract_max"):
+                result = manager.extract_max()
+                self._send_json({"status": "success", "extracted": result, "state": manager.get_state()})
+
+            elif path in ("/api/update", "/update"):
+                item_id = str(body["item_id"])
+                new_priority = float(body["new_priority"]) if "new_priority" in body and body["new_priority"] is not None else None
+                new_data = body.get("new_data", None)
+                result = manager.update(item_id, new_priority, new_data)
+                self._send_json({"status": "success", "item": result, "state": manager.get_state()})
+
+            elif path in ("/api/delete", "/delete"):
+                item_id = str(body["item_id"])
+                result = manager.delete(item_id)
+                self._send_json({"status": "success", "deleted": result, "state": manager.get_state()})
+
+            elif path in ("/api/clear", "/clear"):
+                manager.clear()
+                self._send_json({"status": "success", "state": manager.get_state()})
+
+            elif path in ("/api/checkpoint", "/checkpoint"):
+                manager.checkpoint()
+                self._send_json({"status": "success", "message": "Snapshot saved and WAL compacted!", "state": manager.get_state()})
+
+            elif path in ("/api/crash_reload", "/crash_reload"):
+                res = manager.crash_and_reload()
+                self._send_json({"status": "success", "result": res, "state": manager.get_state()})
+
+            elif path in ("/api/scenario", "/scenario"):
+                scenario = body.get("scenario", "hospital_triage")
+                res = manager.load_scenario(scenario)
+                self._send_json({"status": "success", "result": res, "state": manager.get_state()})
+
+            else:
+                self._send_json({"error": f"Endpoint '{path}' not found"}, status=404)
+
+        except DuplicateItemError as e:
+            self._send_json({"error": str(e), "code": "DUPLICATE_ITEM"}, status=400)
+        except EmptyQueueError as e:
+            self._send_json({"error": str(e), "code": "EMPTY_QUEUE"}, status=400)
+        except ItemNotFoundError as e:
+            self._send_json({"error": str(e), "code": "ITEM_NOT_FOUND"}, status=404)
+        except ValueError as e:
+            self._send_json({"error": f"Validation Error: {str(e)}", "code": "INVALID_VALUE"}, status=400)
+        except Exception as e:
+            self._send_json({"error": str(e), "trace": traceback.format_exc()}, status=500)
