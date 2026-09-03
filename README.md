@@ -4,6 +4,8 @@ A production-grade, thread-safe **Durable Double-Ended Priority Queue (DEPQ)** f
 
 > JanusQueue provides double-ended priority access with durable persistence, combining an indexed Min-Max Heap in memory with atomic file-system journaling and a zero-dependency web interface.
 
+🌐 **Live Demo**: [https://janus-queue.vercel.app/](https://janus-queue.vercel.app/)
+
 ---
 
 ## Overview
@@ -274,5 +276,5 @@ CREATE INDEX idx_pq_priority ON persistent_priority_queue (priority ASC, seq ASC
 
 ## Project Links
 
+- **Live Demo**: [https://janus-queue.vercel.app/](https://janus-queue.vercel.app/)
 - **GitHub Repository**: [https://github.com/amansingh1426/janus-queue](https://github.com/amansingh1426/janus-queue)
-- **Live Vercel Deployment**: Configured via `vercel.json` and `api/index.py`
