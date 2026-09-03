@@ -32,7 +32,7 @@ manager = QueueManager(storage_dir=storage_dir, queue_name="vercel_queue")
 
 
 class handler(http.server.BaseHTTPRequestHandler):
-    """Vercel Serverless HTTP Handler for JanusQueue API."""
+    """Vercel Serverless HTTP Handler for JanusQueue API with robust action extraction."""
 
     def _send_json(self, data: Any, status: int = 200) -> None:
         response_bytes = json.dumps(data).encode("utf-8")
@@ -51,7 +51,38 @@ class handler(http.server.BaseHTTPRequestHandler):
         if content_len == 0:
             return {}
         body_bytes = self.rfile.read(content_len)
+        if not body_bytes:
+            return {}
         return json.loads(body_bytes.decode("utf-8"))
+
+    def _extract_action(self) -> str:
+        """Extract the intended API action from request URI, headers, or query parameters."""
+        raw_sources = [
+            self.path or "",
+            self.headers.get("x-forwarded-uri", ""),
+            self.headers.get("x-matched-path", ""),
+            self.headers.get("x-original-uri", ""),
+        ]
+        combined = " ".join(raw_sources).lower()
+
+        # Check for specific API actions in order of specificity
+        actions = [
+            "extract_min",
+            "extract_max",
+            "crash_reload",
+            "checkpoint",
+            "scenario",
+            "insert",
+            "update",
+            "delete",
+            "clear",
+            "state",
+        ]
+        for act in actions:
+            if act in combined:
+                return act
+
+        return "state"
 
     def do_OPTIONS(self) -> None:
         self.send_response(200)
@@ -61,27 +92,23 @@ class handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        parsed_url = urllib.parse.urlparse(self.path)
-        path = parsed_url.path.rstrip("/")
-
-        # Handle root or API state routes
-        if path in ("/api/state", "/state", "/api/index.py", ""):
+        action = self._extract_action()
+        if action == "state":
             try:
                 state = manager.get_state()
                 self._send_json(state)
             except Exception as e:
                 self._send_json({"error": str(e), "trace": traceback.format_exc()}, status=500)
         else:
-            self._send_json({"error": f"Endpoint '{path}' not found"}, status=404)
+            self._send_json({"error": f"Invalid GET action: {action}"}, status=400)
 
     def do_POST(self) -> None:
-        parsed_url = urllib.parse.urlparse(self.path)
-        path = parsed_url.path.rstrip("/")
+        action = self._extract_action()
 
         try:
             body = self._read_json_body()
 
-            if path in ("/api/insert", "/insert"):
+            if action == "insert":
                 item_id = body.get("item_id")
                 if item_id == "":
                     item_id = None
@@ -90,45 +117,45 @@ class handler(http.server.BaseHTTPRequestHandler):
                 result = manager.insert(item_id, priority, data)
                 self._send_json({"status": "success", "item": result, "state": manager.get_state()})
 
-            elif path in ("/api/extract_min", "/extract_min"):
+            elif action == "extract_min":
                 result = manager.extract_min()
                 self._send_json({"status": "success", "extracted": result, "state": manager.get_state()})
 
-            elif path in ("/api/extract_max", "/extract_max"):
+            elif action == "extract_max":
                 result = manager.extract_max()
                 self._send_json({"status": "success", "extracted": result, "state": manager.get_state()})
 
-            elif path in ("/api/update", "/update"):
+            elif action == "update":
                 item_id = str(body["item_id"])
                 new_priority = float(body["new_priority"]) if "new_priority" in body and body["new_priority"] is not None else None
                 new_data = body.get("new_data", None)
                 result = manager.update(item_id, new_priority, new_data)
                 self._send_json({"status": "success", "item": result, "state": manager.get_state()})
 
-            elif path in ("/api/delete", "/delete"):
+            elif action == "delete":
                 item_id = str(body["item_id"])
                 result = manager.delete(item_id)
                 self._send_json({"status": "success", "deleted": result, "state": manager.get_state()})
 
-            elif path in ("/api/clear", "/clear"):
+            elif action == "clear":
                 manager.clear()
                 self._send_json({"status": "success", "state": manager.get_state()})
 
-            elif path in ("/api/checkpoint", "/checkpoint"):
+            elif action == "checkpoint":
                 manager.checkpoint()
                 self._send_json({"status": "success", "message": "Snapshot saved and WAL compacted!", "state": manager.get_state()})
 
-            elif path in ("/api/crash_reload", "/crash_reload"):
+            elif action == "crash_reload":
                 res = manager.crash_and_reload()
                 self._send_json({"status": "success", "result": res, "state": manager.get_state()})
 
-            elif path in ("/api/scenario", "/scenario"):
+            elif action == "scenario":
                 scenario = body.get("scenario", "hospital_triage")
                 res = manager.load_scenario(scenario)
                 self._send_json({"status": "success", "result": res, "state": manager.get_state()})
 
             else:
-                self._send_json({"error": f"Endpoint '{path}' not found"}, status=404)
+                self._send_json({"error": f"Action '{action}' not recognized"}, status=400)
 
         except DuplicateItemError as e:
             self._send_json({"error": str(e), "code": "DUPLICATE_ITEM"}, status=400)
